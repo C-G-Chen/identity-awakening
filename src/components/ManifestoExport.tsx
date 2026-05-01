@@ -17,63 +17,34 @@ interface FuturePreview {
   newEnhanced: string         // AI 润色后的新身份提示词
 }
 
-// 收集用户数据，调用 AI 生成新旧身份描述
-async function generateIdentityDescriptions(
+// 收集用户数据，调用 ai-analyze 生成新旧身份描述
+async function analyzeIdentity(
   selfExploration: string[],
   goals: { yearGoal: string; monthProject: string; dailyActions: string[] },
   gamify: { risk: string; victory: string; mainQuest: string }
 ): Promise<{ oldLabel: string; newLabel: string } | null> {
   try {
-    // 构建分析提示词
-    const analysisPrompt = `你是一位身份分析专家。请根据用户的自我探索和目标数据，生成简短的新旧身份描述（各10-20字）。
-
-用户自我探索回答：
-${selfExploration.map((a, i) => `Q${i + 1}: ${a}`).join('\n')}
-
-用户年愿景：${goals.yearGoal}
-用户月项目：${goals.monthProject}
-用户每日行动：${goals.dailyActions.filter(a => a).join('、')}
-用户描述的逃避未来：${gamify.risk}
-用户描述的胜利未来：${gamify.victory}
-用户的主任务：${gamify.mainQuest}
-
-请分析并生成：
-旧身份描述：[一句精准描述用户想要改变的那个身份]
-新身份描述：[一句精准描述用户想要成为的那个身份]
-
-只输出JSON格式：{"oldLabel":"...","newLabel":"..."}`
-
-    // 调用 AI 分析
-    const response = await fetch('/.netlify/functions/hunyuan', {
+    const response = await fetch('/.netlify/functions/ai-analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: analysisPrompt,
-        type: 'analyze' // 使用特殊的 type 标识分析请求
-      })
+        selfExploration,
+        goals: {
+          yearGoal: goals.yearGoal,
+          monthProject: goals.monthProject,
+          dailyActions: goals.dailyActions,
+        },
+        gamify: {
+          risk: gamify.risk,
+          victory: gamify.victory,
+          mainQuest: gamify.mainQuest,
+        },
+      }),
     })
-
     if (response.ok) {
       const data = await response.json()
       if (data.oldLabel && data.newLabel) {
         return { oldLabel: data.oldLabel, newLabel: data.newLabel }
-      }
-      // 尝试从 enhanced 字段解析 JSON
-      if (data.enhanced) {
-        try {
-          const parsed = JSON.parse(data.enhanced)
-          if (parsed.oldLabel && parsed.newLabel) {
-            return parsed
-          }
-        } catch {
-          // 解析失败，尝试从文本中提取
-          const text = data.enhanced
-          const oldMatch = text.match(/旧身份[：:]\s*[""]?([^"",\n}]+)/)
-          const newMatch = text.match(/新身份[：:]\s*[""]?([^"",\n}]+)/)
-          if (oldMatch && newMatch) {
-            return { oldLabel: oldMatch[1].trim(), newLabel: newMatch[1].trim() }
-          }
-        }
       }
     }
   } catch (err) {
@@ -161,7 +132,7 @@ function ManifestoContent() {
       }
 
       try {
-        const result = await generateIdentityDescriptions(
+        const result = await analyzeIdentity(
           data.selfExploration.answers,
           { yearGoal: data.goals.yearGoal, monthProject: data.goals.monthProject, dailyActions: data.goals.dailyActions },
           { risk: data.gamify.risk, victory: data.gamify.victory, mainQuest: data.gamify.mainQuest }

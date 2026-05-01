@@ -18,7 +18,8 @@ export interface IdentityData {
     place: string
     emotion: string
     details: string
-    selectedSide: 'old' | 'new' | null
+    selectedOldScenes: string[]  // 多选
+    selectedNewScenes: string[]  // 多选
     completed: boolean
   }
   goals: {
@@ -60,7 +61,8 @@ const defaultData: IdentityData = {
     place: '',
     emotion: '',
     details: '',
-    selectedSide: null,
+    selectedOldScenes: [],
+    selectedNewScenes: [],
     completed: false,
   },
   goals: {

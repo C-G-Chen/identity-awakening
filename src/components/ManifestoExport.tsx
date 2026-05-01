@@ -118,7 +118,7 @@ function ManifestoContent() {
   const today = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
   const fiveYearsLater = new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
 
-  const hasIdentityData = data.antiVision.oldIdentityLabel || data.antiVision.newIdentityLabel
+  const hasIdentityData = data.antiVision.oldIdentityLabel || data.antiVision.newIdentityLabel || data.antiVision.selectedOldScenes.length > 0 || data.antiVision.selectedNewScenes.length > 0
 
   return (
     <div className="max-w-4xl mx-auto">

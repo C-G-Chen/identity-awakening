@@ -692,7 +692,6 @@ function ManifestoContent() {
           <Star className="w-4 h-4 text-violet-400" />
           <div className="h-px flex-1 bg-gradient-to-l from-transparent to-violet-500/40" />
         </div>
-      </div>
 
       {/* Export */}
       <div className="flex justify-center mb-10">
@@ -711,6 +710,7 @@ function ManifestoContent() {
           <br />
           <span className="text-gray-500 not-italic">— Dan Koe</span>
         </blockquote>
+      </div>
       </div>
     </div>
   )

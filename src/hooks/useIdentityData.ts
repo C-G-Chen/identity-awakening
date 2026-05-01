@@ -101,8 +101,18 @@ function loadData(): IdentityData {
   if (saved) {
     try {
       const parsed = JSON.parse(saved)
-      return { ...defaultData, ...parsed }
+      // 深合并：对嵌套对象做合并，而非直接覆盖
+      return {
+        ...defaultData,
+        ...parsed,
+        selfExploration: { ...defaultData.selfExploration, ...(parsed.selfExploration || {}) },
+        antiVision: { ...defaultData.antiVision, ...(parsed.antiVision || {}) },
+        goals: { ...defaultData.goals, ...(parsed.goals || {}) },
+        reminders: { ...defaultData.reminders, ...(parsed.reminders || {}) },
+        gamify: { ...defaultData.gamify, ...(parsed.gamify || {}) },
+      }
     } catch {
+      localStorage.removeItem('identity-change-data-v2')
       return defaultData
     }
   }

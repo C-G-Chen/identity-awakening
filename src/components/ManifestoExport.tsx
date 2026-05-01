@@ -4,14 +4,17 @@ import { useIdentity } from '../hooks/useIdentityData'
 import StepWrapper from './StepWrapper'
 
 // AI生成的对比图片
+type Stage = 'input' | 'enhancing' | 'confirm' | 'generating' | 'done' | 'error'
+
 interface FuturePreview {
-  oldIdentity: string | null
+  stage: Stage
+  oldIdentity: string | null   // 最终图片 URL
   newIdentity: string | null
-  loading: boolean
   error: string | null
-  enhancing?: boolean  // 新增：AI润色状态
-  oldPrompt?: string   // 新增：润色后的旧身份提示词
-  newPrompt?: string   // 新增：润色后的新身份提示词
+  oldInput: string            // 用户输入的旧身份文本
+  newInput: string            // 用户输入的新身份文本
+  oldEnhanced: string         // AI 润色后的旧身份提示词
+  newEnhanced: string         // AI 润色后的新身份提示词
 }
 
 // 调用 Netlify Function 润色提示词
@@ -48,14 +51,25 @@ async function generateImage(prompt: string): Promise<string | null> {
 }
 
 function ManifestoContent() {
-  const { data } = useIdentity()
+  const { data, updateAntiVision } = useIdentity()
   const manifestoRef = useRef<HTMLDivElement>(null)
+
+  // 分阶段状态机：
+  // input → 用户输入新旧身份文本
+  // enhancing → AI 正在润色
+  // confirm → 展示润色结果，等待用户确认
+  // generatng → 正在生成图片
+  // done → 图片已生成
+  // error → 出错
   const [preview, setPreview] = useState<FuturePreview>({
+    stage: 'input',
     oldIdentity: null,
     newIdentity: null,
-    loading: false,
-    enhancing: false,
     error: null,
+    oldInput: data.antiVision.oldIdentityLabel || '',
+    newInput: data.antiVision.newIdentityLabel || '',
+    oldEnhanced: '',
+    newEnhanced: '',
   })
 
   const handleExport = async () => {
@@ -71,54 +85,73 @@ function ManifestoContent() {
     pdf.save('我的身份宣言.pdf')
   }
 
-  // 生成五年后对比图（带 AI 润色）
-  const generateFuturePreview = async () => {
-    setPreview({ ...preview, loading: true, enhancing: true, error: null })
-
+  // 阶段1：用户输入完毕，点击"AI 润色"
+  const handleEnhance = async () => {
+    setPreview(prev => ({ ...prev, stage: 'enhancing', error: null }))
     try {
-      const oldLabel = data.antiVision.oldIdentityLabel || '一个困在旧身份中的人，每天重复着不喜欢的工作'
-      const newLabel = data.antiVision.newIdentityLabel || '一个成功蜕变的人，活出了自己想要的人生'
-
-      // 第一步：调用 AI 润色提示词
       const [enhancedOld, enhancedNew] = await Promise.all([
-        enhancePrompt(oldLabel, 'old'),
-        enhancePrompt(newLabel, 'new')
+        enhancePrompt(preview.oldInput, 'old'),
+        enhancePrompt(preview.newInput, 'new'),
       ])
+      updateAntiVision({ oldIdentityLabel: preview.oldInput, newIdentityLabel: preview.newInput })
+      setPreview(prev => ({
+        ...prev,
+        stage: 'confirm',
+        oldEnhanced: enhancedOld,
+        newEnhanced: enhancedNew,
+      }))
+    } catch {
+      setPreview(prev => ({ ...prev, stage: 'error', error: 'AI 润色失败，请重试' }))
+    }
+  }
 
-      setPreview({ ...preview, enhancing: false, oldPrompt: enhancedOld, newPrompt: enhancedNew, loading: true })
-
-      // 第二步：用润色后的提示词生成图片
-      const oldPrompt = `Cinematic photo, ${enhancedOld}, 5 years in the future, sitting at desk looking at phone with regret, dimly lit room, grey tones, depressed atmosphere, photorealistic`
-      const newPrompt = `Cinematic photo, ${enhancedNew}, 5 years in the future, standing proudly in beautiful space, warm golden lighting, thriving atmosphere, photorealistic`
-
+  // 阶段2：用户确认润色结果，生成图片
+  const handleConfirmAndGenerate = async () => {
+    setPreview(prev => ({ ...prev, stage: 'generating', error: null }))
+    try {
+      const oldPrompt = `Cinematic photo, ${preview.oldEnhanced}, 5 years in the future, sitting at desk looking at phone with regret, dimly lit room, grey tones, depressed atmosphere, photorealistic`
+      const newPrompt = `Cinematic photo, ${preview.newEnhanced}, 5 years in the future, standing proudly in beautiful space, warm golden lighting, thriving atmosphere, photorealistic`
       const [oldImg, newImg] = await Promise.all([
         generateImage(oldPrompt),
         generateImage(newPrompt),
       ])
+      setPreview(prev => ({ ...prev, stage: 'done', oldIdentity: oldImg, newIdentity: newImg }))
+    } catch {
+      setPreview(prev => ({ ...prev, stage: 'error', error: '图片生成失败，请重试' }))
+    }
+  }
 
-      setPreview({
-        oldIdentity: oldImg,
-        newIdentity: newImg,
-        enhancing: false,
-        loading: false,
-        error: null,
-        oldPrompt: enhancedOld,
-        newPrompt: enhancedNew,
-      })
-    } catch (err) {
-      setPreview({
-        ...preview,
-        loading: false,
-        enhancing: false,
-        error: '图片生成失败，请重试',
-      })
+  // 重置到输入阶段
+  const handleReset = () => {
+    setPreview(prev => ({
+      ...prev,
+      stage: 'input',
+      oldIdentity: null,
+      newIdentity: null,
+      error: null,
+      oldEnhanced: '',
+      newEnhanced: '',
+    }))
+  }
+
+  // 重新生成图片（基于已有润色结果）
+  const handleRegenerate = async () => {
+    setPreview(prev => ({ ...prev, stage: 'generating', error: null }))
+    try {
+      const oldPrompt = `Cinematic photo, ${preview.oldEnhanced}, 5 years in the future, sitting at desk looking at phone with regret, dimly lit room, grey tones, depressed atmosphere, photorealistic`
+      const newPrompt = `Cinematic photo, ${preview.newEnhanced}, 5 years in the future, standing proudly in beautiful space, warm golden lighting, thriving atmosphere, photorealistic`
+      const [oldImg, newImg] = await Promise.all([
+        generateImage(oldPrompt),
+        generateImage(newPrompt),
+      ])
+      setPreview(prev => ({ ...prev, stage: 'done', oldIdentity: oldImg, newIdentity: newImg }))
+    } catch {
+      setPreview(prev => ({ ...prev, stage: 'error', error: '图片生成失败，请重试' }))
     }
   }
 
   const today = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
   const fiveYearsLater = new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-
-  const hasIdentityData = data.antiVision.oldIdentityLabel || data.antiVision.newIdentityLabel || data.antiVision.selectedOldScenes.length > 0 || data.antiVision.selectedNewScenes.length > 0
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -144,8 +177,129 @@ function ManifestoContent() {
           AI 深度理解你的愿景，生成两条人生道路的五年后对比
         </p>
 
-        {/* 加载状态 */}
-        {preview.loading && preview.enhancing ? (
+        {/* 阶段一：输入新旧身份文本 */}
+        {preview.stage === 'input' && (
+          <div className="space-y-6">
+            <p className="text-center text-gray-400 text-sm">
+              分别描述你的「旧身份」和「新身份」，AI 将为你生成五年后的人生对比图
+            </p>
+
+            {/* 旧身份输入 */}
+            <div className="p-5 rounded-2xl bg-red-500/5 border border-red-500/20">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2 h-2 rounded-full bg-red-400" />
+                <span className="text-red-400 text-sm font-semibold">旧身份</span>
+                <span className="text-gray-600 text-xs">（你想要改变的那个身份）</span>
+              </div>
+              <textarea
+                value={preview.oldInput}
+                onChange={e => setPreview(prev => ({ ...prev, oldInput: e.target.value }))}
+                placeholder="例如：一个困在不喜欢的工作里，每天机械重复的人..."
+                rows={3}
+                className="w-full bg-slate-800/60 border border-red-500/20 rounded-xl px-4 py-3 text-gray-200 text-sm placeholder-gray-600 resize-none focus:outline-none focus:border-red-500/50 transition-colors"
+              />
+            </div>
+
+            {/* 新身份输入 */}
+            <div className="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-emerald-400 text-sm font-semibold">新身份</span>
+                <span className="text-gray-600 text-xs">（你想要成为的那个人）</span>
+              </div>
+              <textarea
+                value={preview.newInput}
+                onChange={e => setPreview(prev => ({ ...prev, newInput: e.target.value }))}
+                placeholder="例如：一个自由职业者，有稳定收入，做着自己热爱的事业..."
+                rows={3}
+                className="w-full bg-slate-800/60 border border-emerald-500/20 rounded-xl px-4 py-3 text-gray-200 text-sm placeholder-gray-600 resize-none focus:outline-none focus:border-emerald-500/50 transition-colors"
+              />
+            </div>
+
+            {/* 提交按钮 */}
+            <div className="flex justify-center">
+              <button
+                onClick={handleEnhance}
+                disabled={!preview.oldInput.trim() || !preview.newInput.trim()}
+                className="group px-10 py-5 bg-gradient-to-r from-violet-600 via-purple-600 to-blue-600 rounded-2xl text-white font-bold hover:shadow-2xl hover:shadow-violet-500/50 hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 cursor-pointer"
+              >
+                <span className="flex items-center gap-3">
+                  <Sparkles className="w-6 h-6 group-hover:rotate-12 transition-transform" />
+                  <span className="text-lg">让 AI 润色</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 阶段二：展示润色结果，等待确认 */}
+        {preview.stage === 'confirm' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <Sparkles className="w-5 h-5 text-amber-400" />
+              <p className="text-gray-200 text-sm font-medium">🤖 AI 已完成润色，请确认</p>
+              <Sparkles className="w-5 h-5 text-amber-400" />
+            </div>
+
+            {/* 旧身份润色结果 */}
+            <div className="p-5 rounded-2xl bg-red-500/5 border border-red-500/20">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2 h-2 rounded-full bg-red-400" />
+                <span className="text-red-400 text-sm font-semibold">旧身份 → 优化后</span>
+              </div>
+              <div className="bg-slate-800/40 rounded-xl p-4 space-y-2">
+                <div>
+                  <span className="text-gray-500 text-xs">你的原文：</span>
+                  <p className="text-gray-400 text-sm italic mt-0.5">{preview.oldInput}</p>
+                </div>
+                <div>
+                  <span className="text-emerald-400 text-xs">✨ AI 优化后：</span>
+                  <p className="text-gray-200 text-sm mt-0.5">{preview.oldEnhanced}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* 新身份润色结果 */}
+            <div className="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-emerald-400 text-sm font-semibold">新身份 → 优化后</span>
+              </div>
+              <div className="bg-slate-800/40 rounded-xl p-4 space-y-2">
+                <div>
+                  <span className="text-gray-500 text-xs">你的原文：</span>
+                  <p className="text-gray-400 text-sm italic mt-0.5">{preview.newInput}</p>
+                </div>
+                <div>
+                  <span className="text-emerald-400 text-xs">✨ AI 优化后：</span>
+                  <p className="text-gray-200 text-sm mt-0.5">{preview.newEnhanced}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* 操作按钮 */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <button
+                onClick={handleConfirmAndGenerate}
+                className="group px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-2xl text-white font-bold hover:shadow-2xl hover:shadow-emerald-500/40 hover:scale-105 transition-all cursor-pointer"
+              >
+                <span className="flex items-center gap-3">
+                  <Sparkles className="w-5 h-5" />
+                  <span>确认并生成对比图</span>
+                </span>
+              </button>
+              <button
+                onClick={handleReset}
+                className="px-6 py-3 text-gray-500 text-sm hover:text-gray-300 transition-colors cursor-pointer"
+              >
+                重新编辑
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 阶段三：AI 润色中 */}
+        {preview.stage === 'enhancing' && (
           <div className="flex flex-col items-center justify-center py-12">
             <div className="relative w-20 h-20 mb-6">
               <div className="absolute inset-0 border-4 border-violet-500/20 rounded-full" />
@@ -153,21 +307,13 @@ function ManifestoContent() {
               <div className="absolute inset-3 border-4 border-transparent border-t-blue-500 rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
               <div className="absolute inset-6 border-4 border-transparent border-t-amber-500 rounded-full animate-spin" style={{ animationDuration: '2s' }} />
             </div>
-            <p className="text-gray-200 text-base font-medium mb-1">🤖 AI 正在深度理解你的愿景...</p>
+            <p className="text-gray-200 text-base font-medium mb-1">🤖 AI 正在润色你的描述...</p>
             <p className="text-gray-500 text-xs">将你的想法转化为精准的视觉描述</p>
-            
-            {/* 显示润色过程 */}
-            {preview.oldPrompt && (
-              <div className="mt-6 max-w-lg text-center">
-                <p className="text-gray-500 text-xs mb-2">AI 优化后的提示词：</p>
-                <div className="p-3 bg-slate-800/50 rounded-lg text-left">
-                  <p className="text-emerald-400 text-xs mb-1">🆕 新身份：</p>
-                  <p className="text-gray-300 text-xs italic">{preview.newPrompt}</p>
-                </div>
-              </div>
-            )}
           </div>
-        ) : preview.loading ? (
+        )}
+
+        {/* 阶段四：生成图片中 */}
+        {preview.stage === 'generating' && (
           <div className="flex flex-col items-center justify-center py-12">
             <div className="relative w-16 h-16 mb-4">
               <div className="absolute inset-0 border-4 border-violet-500/20 rounded-full" />
@@ -177,17 +323,115 @@ function ManifestoContent() {
             <p className="text-gray-300 text-sm font-medium mb-1">AI 正在生成对比图...</p>
             <p className="text-gray-500 text-xs">这可能需要 10-20 秒</p>
           </div>
-        ) : preview.error ? (
+        )}
+
+        {/* 错误状态 */}
+        {preview.stage === 'error' && (
           <div className="text-center py-8">
             <p className="text-red-400 text-sm mb-4">{preview.error}</p>
-            <button
-              onClick={generateFuturePreview}
-              className="px-6 py-3 bg-violet-600/50 border border-violet-500/30 rounded-full text-white text-sm hover:bg-violet-600/70 transition-all cursor-pointer"
-            >
-              重新生成
-            </button>
+            <div className="flex justify-center gap-3">
+              <button
+                onClick={preview.oldEnhanced ? handleRegenerate : handleEnhance}
+                className="px-6 py-3 bg-violet-600/50 border border-violet-500/30 rounded-full text-white text-sm hover:bg-violet-600/70 transition-all cursor-pointer"
+              >
+                重新尝试
+              </button>
+              <button
+                onClick={handleReset}
+                className="px-6 py-3 text-gray-500 text-sm hover:text-gray-300 transition-colors cursor-pointer"
+              >
+                返回编辑
+              </button>
+            </div>
           </div>
-        ) : preview.oldIdentity && preview.newIdentity ? (
+        )}
+
+        {/* 阶段五：图片已生成 */}
+        {preview.stage === 'done' && (
+          <div className="space-y-6">
+            {/* 时间标签 */}
+            <div className="flex items-center justify-center gap-2 text-sm">
+              <Clock className="w-4 h-4 text-gray-500" />
+              <span className="text-gray-500">{fiveYearsLater}</span>
+            </div>
+
+            {/* 对比图 */}
+            <div className="grid grid-cols-2 gap-4">
+              {/* 旧身份 */}
+              <div className="relative group overflow-hidden rounded-2xl">
+                <img
+                  src={preview.oldIdentity || ''}
+                  alt="如果继续旧身份"
+                  className="w-full aspect-square object-cover transition-transform duration-500 group-hover:scale-105"
+                />
+                {/* 渐变遮罩 */}
+                <div className="absolute inset-0 bg-gradient-to-t from-red-900/90 via-red-900/20 to-transparent" />
+                {/* 标签 */}
+                <div className="absolute top-3 left-3 z-10">
+                  <span className="px-3 py-1 bg-red-500/90 backdrop-blur rounded-full text-white text-xs font-bold flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                    停滞路线
+                  </span>
+                </div>
+                <div className="absolute bottom-0 left-0 right-0 p-4">
+                  <p className="text-red-200 text-xs mb-1">如果你继续</p>
+                  <p className="text-white font-bold text-lg leading-tight">{preview.oldInput || data.antiVision.oldIdentityLabel || '旧身份'}</p>
+                </div>
+              </div>
+
+              {/* 新身份 */}
+              <div className="relative group overflow-hidden rounded-2xl">
+                <img
+                  src={preview.newIdentity || ''}
+                  alt="如果成为新身份"
+                  className="w-full aspect-square object-cover transition-transform duration-500 group-hover:scale-105"
+                />
+                {/* 渐变遮罩 */}
+                <div className="absolute inset-0 bg-gradient-to-t from-emerald-900/80 via-emerald-900/10 to-transparent" />
+                {/* 标签 */}
+                <div className="absolute top-3 left-3 z-10">
+                  <span className="px-3 py-1 bg-emerald-500/90 backdrop-blur rounded-full text-white text-xs font-bold flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                    觉醒路线
+                  </span>
+                </div>
+                <div className="absolute bottom-0 left-0 right-0 p-4">
+                  <p className="text-emerald-200 text-xs mb-1">如果你成为</p>
+                  <p className="text-white font-bold text-lg leading-tight">{preview.newInput || data.antiVision.newIdentityLabel || '新身份'}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* 洞察语句 */}
+            <div className="flex items-center justify-center gap-4 p-4 rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/20">
+              <Zap className="w-5 h-5 text-amber-400 flex-shrink-0" />
+              <p className="text-gray-300 text-sm text-center">
+                每一天的选择，都在决定你属于左边还是右边。
+                <span className="text-white font-semibold ml-1">今天，你选哪边？</span>
+              </p>
+            </div>
+
+            {/* 重新生成按钮 */}
+            <div className="flex justify-center gap-3">
+              <button
+                onClick={handleRegenerate}
+                className="text-gray-500 text-xs hover:text-gray-300 transition-colors cursor-pointer flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                重新生成
+              </button>
+              <button
+                onClick={handleReset}
+                className="text-gray-500 text-xs hover:text-gray-300 transition-colors cursor-pointer flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10"
+              >
+                重新编辑
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 阶段五：图片已生成 */}
+        {preview.stage === 'done' && (
           <div className="space-y-6">
             {/* 时间标签 */}
             <div className="flex items-center justify-center gap-2 text-sm">
@@ -252,37 +496,21 @@ function ManifestoContent() {
             </div>
 
             {/* 重新生成按钮 */}
-            <div className="flex justify-center">
+            <div className="flex justify-center gap-3">
               <button
-                onClick={generateFuturePreview}
+                onClick={handleRegenerate}
                 className="text-gray-500 text-xs hover:text-gray-300 transition-colors cursor-pointer flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 重新生成
               </button>
+              <button
+                onClick={handleReset}
+                className="text-gray-500 text-xs hover:text-gray-300 transition-colors cursor-pointer flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10"
+              >
+                重新编辑
+              </button>
             </div>
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-violet-600/30 via-blue-600/30 to-purple-600/30 flex items-center justify-center relative">
-              <Sparkles className="w-12 h-12 text-violet-400" />
-              <div className="absolute inset-0 rounded-full border-2 border-dashed border-violet-500/30 animate-pulse" />
-            </div>
-            <p className="text-gray-300 text-sm mb-2">还没有生成预览</p>
-            <p className="text-gray-500 text-xs mb-6">点击下方按钮，AI 将深度理解你的愿景并生成对比图</p>
-            <button
-              onClick={generateFuturePreview}
-              disabled={!hasIdentityData}
-              className="group px-10 py-5 bg-gradient-to-r from-violet-600 via-purple-600 to-blue-600 rounded-2xl text-white font-bold hover:shadow-2xl hover:shadow-violet-500/50 hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 cursor-pointer"
-            >
-              <span className="flex items-center gap-3">
-                <Sparkles className="w-6 h-6 group-hover:rotate-12 transition-transform" />
-                <span className="text-lg">生成五年后对比图</span>
-              </span>
-            </button>
-            {!hasIdentityData && (
-              <p className="text-gray-600 text-xs mt-4">（建议先在步骤2填写你的新旧身份）</p>
-            )}
           </div>
         )}
       </div>

@@ -8,6 +8,35 @@
     <title>Identity Shift · 身份改变实践</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- 内联错误捕获：把 JS 错误直接显示在页面上 -->
+    <script>
+      window.__APP_ERRORS = [];
+      window.onerror = function(msg, url, line, col, error) {
+        const div = document.getElementById('error-box') || (function(){
+          var d = document.createElement('div');
+          d.id = 'error-box';
+          d.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#0A0A0F;color:#f87171;padding:24px;font-family:monospace;font-size:14px;overflow:auto;z-index:99999;';
+          document.body.appendChild(d);
+          return d;
+        })();
+        var err = '<b>JS Error:</b> ' + msg + '<br>';
+        if (url) err += 'File: ' + url + '<br>';
+        if (line) err += 'Line: ' + line + ', Col: ' + col + '<br>';
+        if (error && error.stack) err += '<pre style="margin-top:8px;color:#fbbf24;">' + error.stack.replace(/</g,'&lt;') + '</pre>';
+        div.innerHTML += err + '<hr style="border-color:#333;margin:12px 0;">';
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        window.onerror('Unhandled Promise: ' + (e.reason || ''));
+      });
+      // 页面加载超时检测
+      setTimeout(function(){
+        var root = document.getElementById('root');
+        if (root && root.innerHTML.trim() === '') {
+          window.onerror('页面加载超时：root 元素为空，React 可能未能渲染。请检查上方错误信息。');
+        }
+      }, 5000);
+    </script>
   </head>
   <body>
     <div id="root"></div>

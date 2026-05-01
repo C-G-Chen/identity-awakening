@@ -224,6 +224,35 @@ function ManifestoContent() {
     }
   }
 
+  // 跳过润色，直接生成图片
+  const handleDirectGenerate = async () => {
+    setPreview(prev => ({ ...prev, stage: 'generating', error: null }))
+    try {
+      updateAntiVision({
+        oldIdentityLabel: preview.oldInput,
+        newIdentityLabel: preview.newInput,
+        oldDescription: preview.oldDescription,
+        newDescription: preview.newDescription,
+      })
+      const oldPrompt = `Cinematic photo, ${preview.oldInput}, 5 years in the future, sitting at desk looking at phone with regret, dimly lit room, grey tones, depressed atmosphere, photorealistic`
+      const newPrompt = `Cinematic photo, ${preview.newInput}, 5 years in the future, standing proudly in beautiful space, warm golden lighting, thriving atmosphere, photorealistic`
+      const [oldImg, newImg] = await Promise.all([
+        generateImage(oldPrompt),
+        generateImage(newPrompt),
+      ])
+      setPreview(prev => ({
+        ...prev,
+        stage: 'done',
+        oldIdentity: oldImg,
+        newIdentity: newImg,
+        oldEnhanced: preview.oldInput,
+        newEnhanced: preview.newInput,
+      }))
+    } catch {
+      setPreview(prev => ({ ...prev, stage: 'error', error: '图片生成失败，请重试' }))
+    }
+  }
+
   // 阶段2：用户确认润色结果，生成图片
   const handleConfirmAndGenerate = async () => {
     setPreview(prev => ({ ...prev, stage: 'generating', error: null }))
@@ -384,16 +413,26 @@ function ManifestoContent() {
               </div>
             </div>
 
-            {/* 提交按钮 */}
-            <div className="flex justify-center">
+            {/* 操作按钮组 */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
               <button
                 onClick={handleEnhance}
                 disabled={!preview.oldInput.trim() || !preview.newInput.trim()}
-                className="group px-10 py-5 bg-gradient-to-r from-violet-600 via-purple-600 to-blue-600 rounded-2xl text-white font-bold hover:shadow-2xl hover:shadow-violet-500/50 hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 cursor-pointer"
+                className="group w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-violet-600 via-purple-600 to-blue-600 rounded-2xl text-white font-bold hover:shadow-2xl hover:shadow-violet-500/50 hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 cursor-pointer"
               >
-                <span className="flex items-center gap-3">
-                  <Sparkles className="w-6 h-6 group-hover:rotate-12 transition-transform" />
-                  <span className="text-lg">让 AI 润色标签</span>
+                <span className="flex items-center justify-center gap-2.5">
+                  <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+                  <span>AI 润色标签</span>
+                </span>
+              </button>
+              <button
+                onClick={handleDirectGenerate}
+                disabled={!preview.oldInput.trim() || !preview.newInput.trim()}
+                className="group w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-2xl text-white font-bold hover:shadow-2xl hover:shadow-emerald-500/40 hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 cursor-pointer"
+              >
+                <span className="flex items-center justify-center gap-2.5">
+                  <span className="text-lg">🖼</span>
+                  <span>直接生成图片</span>
                 </span>
               </button>
             </div>

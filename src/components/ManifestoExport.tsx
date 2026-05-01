@@ -1,10 +1,10 @@
-import { useRef, useState } from 'react'
-import { FileText, Download, Star, PartyPopper, Sparkles, Clock, Zap, RefreshCw } from 'lucide-react'
+import { useRef, useState, useEffect } from 'react'
+import { FileText, Download, Star, PartyPopper, Sparkles, Clock, Zap, RefreshCw, Brain } from 'lucide-react'
 import { useIdentity } from '../hooks/useIdentityData'
 import StepWrapper from './StepWrapper'
 
 // AI生成的对比图片
-type Stage = 'input' | 'enhancing' | 'confirm' | 'generating' | 'done' | 'error'
+type Stage = 'analyzing' | 'input' | 'enhancing' | 'confirm' | 'generating' | 'done' | 'error'
 
 interface FuturePreview {
   stage: Stage
@@ -15,6 +15,71 @@ interface FuturePreview {
   newInput: string            // 用户输入的新身份文本
   oldEnhanced: string         // AI 润色后的旧身份提示词
   newEnhanced: string         // AI 润色后的新身份提示词
+}
+
+// 收集用户数据，调用 AI 生成新旧身份描述
+async function generateIdentityDescriptions(
+  selfExploration: string[],
+  goals: { yearGoal: string; monthProject: string; dailyActions: string[] },
+  gamify: { risk: string; victory: string; mainQuest: string }
+): Promise<{ oldLabel: string; newLabel: string } | null> {
+  try {
+    // 构建分析提示词
+    const analysisPrompt = `你是一位身份分析专家。请根据用户的自我探索和目标数据，生成简短的新旧身份描述（各10-20字）。
+
+用户自我探索回答：
+${selfExploration.map((a, i) => `Q${i + 1}: ${a}`).join('\n')}
+
+用户年愿景：${goals.yearGoal}
+用户月项目：${goals.monthProject}
+用户每日行动：${goals.dailyActions.filter(a => a).join('、')}
+用户描述的逃避未来：${gamify.risk}
+用户描述的胜利未来：${gamify.victory}
+用户的主任务：${gamify.mainQuest}
+
+请分析并生成：
+旧身份描述：[一句精准描述用户想要改变的那个身份]
+新身份描述：[一句精准描述用户想要成为的那个身份]
+
+只输出JSON格式：{"oldLabel":"...","newLabel":"..."}`
+
+    // 调用 AI 分析
+    const response = await fetch('/.netlify/functions/hunyuan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: analysisPrompt,
+        type: 'analyze' // 使用特殊的 type 标识分析请求
+      })
+    })
+
+    if (response.ok) {
+      const data = await response.json()
+      if (data.oldLabel && data.newLabel) {
+        return { oldLabel: data.oldLabel, newLabel: data.newLabel }
+      }
+      // 尝试从 enhanced 字段解析 JSON
+      if (data.enhanced) {
+        try {
+          const parsed = JSON.parse(data.enhanced)
+          if (parsed.oldLabel && parsed.newLabel) {
+            return parsed
+          }
+        } catch {
+          // 解析失败，尝试从文本中提取
+          const text = data.enhanced
+          const oldMatch = text.match(/旧身份[：:]\s*[""]?([^"",\n}]+)/)
+          const newMatch = text.match(/新身份[：:]\s*[""]?([^"",\n}]+)/)
+          if (oldMatch && newMatch) {
+            return { oldLabel: oldMatch[1].trim(), newLabel: newMatch[1].trim() }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('AI analysis failed:', err)
+  }
+  return null
 }
 
 // 调用 Netlify Function 润色提示词
@@ -53,8 +118,10 @@ async function generateImage(prompt: string): Promise<string | null> {
 function ManifestoContent() {
   const { data, updateAntiVision } = useIdentity()
   const manifestoRef = useRef<HTMLDivElement>(null)
+  const hasAutoAnalyzed = useRef(false) // 防止重复调用
 
   // 分阶段状态机：
+  // analyizing → AI 正在分析用户数据
   // input → 用户输入新旧身份文本
   // enhancing → AI 正在润色
   // confirm → 展示润色结果，等待用户确认
@@ -62,15 +129,71 @@ function ManifestoContent() {
   // done → 图片已生成
   // error → 出错
   const [preview, setPreview] = useState<FuturePreview>({
-    stage: 'input',
+    stage: 'analyzing', // 初始为分析状态
     oldIdentity: null,
     newIdentity: null,
     error: null,
-    oldInput: data.antiVision.oldIdentityLabel || '',
-    newInput: data.antiVision.newIdentityLabel || '',
+    oldInput: '',
+    newInput: '',
     oldEnhanced: '',
     newEnhanced: '',
   })
+
+  // 组件加载时，自动分析用户已填写的内容
+  useEffect(() => {
+    // 防止重复调用
+    if (hasAutoAnalyzed.current) return
+    hasAutoAnalyzed.current = true
+
+    const runAnalysis = async () => {
+      // 检查用户是否有填写内容
+      const hasData =
+        data.selfExploration.answers.some(a => a.trim()) ||
+        data.goals.yearGoal ||
+        data.goals.monthProject ||
+        data.gamify.risk ||
+        data.gamify.victory
+
+      if (!hasData) {
+        // 没有数据，直接进入输入状态
+        setPreview(prev => ({ ...prev, stage: 'input' }))
+        return
+      }
+
+      try {
+        const result = await generateIdentityDescriptions(
+          data.selfExploration.answers,
+          { yearGoal: data.goals.yearGoal, monthProject: data.goals.monthProject, dailyActions: data.goals.dailyActions },
+          { risk: data.gamify.risk, victory: data.gamify.victory, mainQuest: data.gamify.mainQuest }
+        )
+
+        if (result) {
+          setPreview(prev => ({
+            ...prev,
+            stage: 'input',
+            oldInput: result.oldLabel,
+            newInput: result.newLabel,
+          }))
+          // 同时保存到 antiVision
+          updateAntiVision({ oldIdentityLabel: result.oldLabel, newIdentityLabel: result.newLabel })
+        } else {
+          // AI 分析失败，使用基础描述
+          const fallbackOld = data.antiVision.oldIdentityLabel || data.gamify.risk || '困在现状的人'
+          const fallbackNew = data.antiVision.newIdentityLabel || data.gamify.victory || data.goals.yearGoal || '理想中的自己'
+          setPreview(prev => ({
+            ...prev,
+            stage: 'input',
+            oldInput: fallbackOld,
+            newInput: fallbackNew,
+          }))
+        }
+      } catch {
+        setPreview(prev => ({ ...prev, stage: 'input' }))
+      }
+    }
+
+    runAnalysis()
+  }, []) // 只在组件挂载时执行一次
 
   const handleExport = async () => {
     const jsPDF = (await import('jspdf')).default
@@ -176,6 +299,20 @@ function ManifestoContent() {
         <p className="text-center text-gray-400 text-sm mb-6">
           AI 深度理解你的愿景，生成两条人生道路的五年后对比
         </p>
+
+        {/* 分析状态：AI 正在读取用户数据 */}
+        {preview.stage === 'analyzing' && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <div className="relative w-20 h-20 mb-6">
+              <div className="absolute inset-0 border-4 border-violet-500/20 rounded-full" />
+              <div className="absolute inset-0 border-4 border-transparent border-t-violet-500 rounded-full animate-spin" />
+              <div className="absolute inset-3 border-4 border-transparent border-t-blue-500 rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+              <div className="absolute inset-6 border-4 border-transparent border-t-amber-500 rounded-full animate-spin" style={{ animationDuration: '2s' }} />
+            </div>
+            <p className="text-gray-200 text-base font-medium mb-1">🧠 AI 正在分析你的数据...</p>
+            <p className="text-gray-500 text-xs">读取你的自我探索、目标与愿景</p>
+          </div>
+        )}
 
         {/* 阶段一：输入新旧身份文本 */}
         {preview.stage === 'input' && (

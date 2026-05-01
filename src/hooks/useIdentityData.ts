@@ -13,6 +13,8 @@ export interface IdentityData {
   antiVision: {
     oldIdentityLabel: string
     newIdentityLabel: string
+    oldDescription: string     // 旧身份详细描述
+    newDescription: string     // 新身份详细描述
     scenario: string
     time: string
     place: string
@@ -56,6 +58,8 @@ const defaultData: IdentityData = {
   antiVision: {
     oldIdentityLabel: '',
     newIdentityLabel: '',
+    oldDescription: '',
+    newDescription: '',
     scenario: '',
     time: '',
     place: '',

@@ -11,8 +11,10 @@ interface FuturePreview {
   oldIdentity: string | null   // 最终图片 URL
   newIdentity: string | null
   error: string | null
-  oldInput: string            // 用户输入的旧身份文本
-  newInput: string            // 用户输入的新身份文本
+  oldInput: string            // 旧身份标签（简短，用于图片）
+  newInput: string            // 新身份标签（简短，用于图片）
+  oldDescription: string       // 旧身份详细描述
+  newDescription: string       // 新身份详细描述
   oldEnhanced: string         // AI 润色后的旧身份提示词
   newEnhanced: string         // AI 润色后的新身份提示词
 }
@@ -22,7 +24,7 @@ async function analyzeIdentity(
   selfExploration: string[],
   goals: { yearGoal: string; monthProject: string; dailyActions: string[] },
   gamify: { risk: string; victory: string; mainQuest: string }
-): Promise<{ oldLabel: string; newLabel: string } | null> {
+): Promise<{ oldLabel: string; newLabel: string; oldDescription: string; newDescription: string } | null> {
   try {
     const response = await fetch('/.netlify/functions/ai-analyze', {
       method: 'POST',
@@ -44,7 +46,12 @@ async function analyzeIdentity(
     if (response.ok) {
       const data = await response.json()
       if (data.oldLabel && data.newLabel) {
-        return { oldLabel: data.oldLabel, newLabel: data.newLabel }
+        return {
+          oldLabel: data.oldLabel,
+          newLabel: data.newLabel,
+          oldDescription: data.oldDescription || '',
+          newDescription: data.newDescription || '',
+        }
       }
     }
   } catch (err) {
@@ -106,6 +113,8 @@ function ManifestoContent() {
     error: null,
     oldInput: '',
     newInput: '',
+    oldDescription: '',
+    newDescription: '',
     oldEnhanced: '',
     newEnhanced: '',
   })
@@ -144,18 +153,29 @@ function ManifestoContent() {
             stage: 'input',
             oldInput: result.oldLabel,
             newInput: result.newLabel,
+            oldDescription: result.oldDescription,
+            newDescription: result.newDescription,
           }))
           // 同时保存到 antiVision
-          updateAntiVision({ oldIdentityLabel: result.oldLabel, newIdentityLabel: result.newLabel })
+          updateAntiVision({
+            oldIdentityLabel: result.oldLabel,
+            newIdentityLabel: result.newLabel,
+            oldDescription: result.oldDescription,
+            newDescription: result.newDescription,
+          })
         } else {
           // AI 分析失败，使用基础描述
           const fallbackOld = data.antiVision.oldIdentityLabel || data.gamify.risk || '困在现状的人'
           const fallbackNew = data.antiVision.newIdentityLabel || data.gamify.victory || data.goals.yearGoal || '理想中的自己'
+          const fallbackOldDesc = data.antiVision.oldDescription || data.gamify.risk || ''
+          const fallbackNewDesc = data.antiVision.newDescription || data.gamify.victory || data.goals.yearGoal || ''
           setPreview(prev => ({
             ...prev,
             stage: 'input',
             oldInput: fallbackOld,
             newInput: fallbackNew,
+            oldDescription: fallbackOldDesc,
+            newDescription: fallbackNewDesc,
           }))
         }
       } catch {
@@ -187,7 +207,12 @@ function ManifestoContent() {
         enhancePrompt(preview.oldInput, 'old'),
         enhancePrompt(preview.newInput, 'new'),
       ])
-      updateAntiVision({ oldIdentityLabel: preview.oldInput, newIdentityLabel: preview.newInput })
+      updateAntiVision({
+        oldIdentityLabel: preview.oldEnhanced || preview.oldInput,
+        newIdentityLabel: preview.newEnhanced || preview.newInput,
+        oldDescription: preview.oldDescription,
+        newDescription: preview.newDescription,
+      })
       setPreview(prev => ({
         ...prev,
         stage: 'confirm',
@@ -225,6 +250,7 @@ function ManifestoContent() {
       error: null,
       oldEnhanced: '',
       newEnhanced: '',
+      // 保留用户已编辑的内容
     }))
   }
 
@@ -289,7 +315,7 @@ function ManifestoContent() {
         {preview.stage === 'input' && (
           <div className="space-y-6">
             <p className="text-center text-gray-400 text-sm">
-              分别描述你的「旧身份」和「新身份」，AI 将为你生成五年后的人生对比图
+              AI 已根据你的回答生成了新旧身份的描述，你可以直接使用或修改
             </p>
 
             {/* 旧身份输入 */}
@@ -299,13 +325,30 @@ function ManifestoContent() {
                 <span className="text-red-400 text-sm font-semibold">旧身份</span>
                 <span className="text-gray-600 text-xs">（你想要改变的那个身份）</span>
               </div>
-              <textarea
-                value={preview.oldInput}
-                onChange={e => setPreview(prev => ({ ...prev, oldInput: e.target.value }))}
-                placeholder="例如：一个困在不喜欢的工作里，每天机械重复的人..."
-                rows={3}
-                className="w-full bg-slate-800/60 border border-red-500/20 rounded-xl px-4 py-3 text-gray-200 text-sm placeholder-gray-600 resize-none focus:outline-none focus:border-red-500/50 transition-colors"
-              />
+
+              {/* 简短标签 */}
+              <div className="mb-3">
+                <label className="text-gray-500 text-xs mb-1 block">身份标签（用于图片标题）</label>
+                <input
+                  type="text"
+                  value={preview.oldInput}
+                  onChange={e => setPreview(prev => ({ ...prev, oldInput: e.target.value }))}
+                  placeholder="例如：困在不喜欢的工作里的人"
+                  className="w-full bg-slate-800/60 border border-red-500/20 rounded-xl px-4 py-2.5 text-gray-200 text-sm placeholder-gray-600 focus:outline-none focus:border-red-500/50 transition-colors"
+                />
+              </div>
+
+              {/* 详细描述 */}
+              <div>
+                <label className="text-gray-500 text-xs mb-1 block">详细描述（生活/情绪/人际/财务/作息）</label>
+                <textarea
+                  value={preview.oldDescription}
+                  onChange={e => setPreview(prev => ({ ...prev, oldDescription: e.target.value }))}
+                  placeholder="AI 已生成详细描述，你可以修改..."
+                  rows={5}
+                  className="w-full bg-slate-800/60 border border-red-500/20 rounded-xl px-4 py-3 text-gray-200 text-sm placeholder-gray-600 resize-none focus:outline-none focus:border-red-500/50 transition-colors"
+                />
+              </div>
             </div>
 
             {/* 新身份输入 */}
@@ -315,13 +358,30 @@ function ManifestoContent() {
                 <span className="text-emerald-400 text-sm font-semibold">新身份</span>
                 <span className="text-gray-600 text-xs">（你想要成为的那个人）</span>
               </div>
-              <textarea
-                value={preview.newInput}
-                onChange={e => setPreview(prev => ({ ...prev, newInput: e.target.value }))}
-                placeholder="例如：一个自由职业者，有稳定收入，做着自己热爱的事业..."
-                rows={3}
-                className="w-full bg-slate-800/60 border border-emerald-500/20 rounded-xl px-4 py-3 text-gray-200 text-sm placeholder-gray-600 resize-none focus:outline-none focus:border-emerald-500/50 transition-colors"
-              />
+
+              {/* 简短标签 */}
+              <div className="mb-3">
+                <label className="text-gray-500 text-xs mb-1 block">身份标签（用于图片标题）</label>
+                <input
+                  type="text"
+                  value={preview.newInput}
+                  onChange={e => setPreview(prev => ({ ...prev, newInput: e.target.value }))}
+                  placeholder="例如：自由职业者，做着热爱的事业"
+                  className="w-full bg-slate-800/60 border border-emerald-500/20 rounded-xl px-4 py-2.5 text-gray-200 text-sm placeholder-gray-600 focus:outline-none focus:border-emerald-500/50 transition-colors"
+                />
+              </div>
+
+              {/* 详细描述 */}
+              <div>
+                <label className="text-gray-500 text-xs mb-1 block">详细描述（生活/情绪/人际/财务/作息）</label>
+                <textarea
+                  value={preview.newDescription}
+                  onChange={e => setPreview(prev => ({ ...prev, newDescription: e.target.value }))}
+                  placeholder="AI 已生成详细描述，你可以修改..."
+                  rows={5}
+                  className="w-full bg-slate-800/60 border border-emerald-500/20 rounded-xl px-4 py-3 text-gray-200 text-sm placeholder-gray-600 resize-none focus:outline-none focus:border-emerald-500/50 transition-colors"
+                />
+              </div>
             </div>
 
             {/* 提交按钮 */}
@@ -333,7 +393,7 @@ function ManifestoContent() {
               >
                 <span className="flex items-center gap-3">
                   <Sparkles className="w-6 h-6 group-hover:rotate-12 transition-transform" />
-                  <span className="text-lg">让 AI 润色</span>
+                  <span className="text-lg">让 AI 润色标签</span>
                 </span>
               </button>
             </div>
@@ -353,17 +413,19 @@ function ManifestoContent() {
             <div className="p-5 rounded-2xl bg-red-500/5 border border-red-500/20">
               <div className="flex items-center gap-2 mb-3">
                 <span className="w-2 h-2 rounded-full bg-red-400" />
-                <span className="text-red-400 text-sm font-semibold">旧身份 → 优化后</span>
+                <span className="text-red-400 text-sm font-semibold">旧身份</span>
               </div>
-              <div className="bg-slate-800/40 rounded-xl p-4 space-y-2">
+              <div className="bg-slate-800/40 rounded-xl p-4 space-y-3">
                 <div>
-                  <span className="text-gray-500 text-xs">你的原文：</span>
-                  <p className="text-gray-400 text-sm italic mt-0.5">{preview.oldInput}</p>
-                </div>
-                <div>
-                  <span className="text-emerald-400 text-xs">✨ AI 优化后：</span>
+                  <span className="text-gray-500 text-xs">✨ 身份标签：</span>
                   <p className="text-gray-200 text-sm mt-0.5">{preview.oldEnhanced}</p>
                 </div>
+                {preview.oldDescription && (
+                  <div>
+                    <span className="text-gray-500 text-xs">📋 详细描述：</span>
+                    <p className="text-gray-300 text-xs mt-1 whitespace-pre-line leading-relaxed">{preview.oldDescription}</p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -371,17 +433,19 @@ function ManifestoContent() {
             <div className="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
               <div className="flex items-center gap-2 mb-3">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span className="text-emerald-400 text-sm font-semibold">新身份 → 优化后</span>
+                <span className="text-emerald-400 text-sm font-semibold">新身份</span>
               </div>
-              <div className="bg-slate-800/40 rounded-xl p-4 space-y-2">
+              <div className="bg-slate-800/40 rounded-xl p-4 space-y-3">
                 <div>
-                  <span className="text-gray-500 text-xs">你的原文：</span>
-                  <p className="text-gray-400 text-sm italic mt-0.5">{preview.newInput}</p>
-                </div>
-                <div>
-                  <span className="text-emerald-400 text-xs">✨ AI 优化后：</span>
+                  <span className="text-gray-500 text-xs">✨ 身份标签：</span>
                   <p className="text-gray-200 text-sm mt-0.5">{preview.newEnhanced}</p>
                 </div>
+                {preview.newDescription && (
+                  <div>
+                    <span className="text-gray-500 text-xs">📋 详细描述：</span>
+                    <p className="text-gray-300 text-xs mt-1 whitespace-pre-line leading-relaxed">{preview.newDescription}</p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -567,6 +631,20 @@ function ManifestoContent() {
         </div>
 
         <div className="space-y-4 mb-8">
+          {/* 旧身份详细描述 */}
+          {data.antiVision.oldDescription && (
+            <div className="p-4 bg-red-600/10 border border-red-500/15 rounded-2xl">
+              <div className="text-red-400 text-xs font-semibold uppercase tracking-wider mb-2">🛑 我正在告别的旧身份</div>
+              <p className="text-gray-300 text-sm whitespace-pre-line leading-relaxed">{data.antiVision.oldDescription}</p>
+            </div>
+          )}
+          {/* 新身份详细描述 */}
+          {data.antiVision.newDescription && (
+            <div className="p-4 bg-emerald-600/10 border border-emerald-500/15 rounded-2xl">
+              <div className="text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-2">✨ 我正在成为的新身份</div>
+              <p className="text-gray-300 text-sm whitespace-pre-line leading-relaxed">{data.antiVision.newDescription}</p>
+            </div>
+          )}
           {data.goals.yearGoal && (
             <div className="p-4 bg-violet-600/10 border border-violet-500/15 rounded-2xl">
               <div className="text-violet-400 text-xs font-semibold uppercase tracking-wider mb-2">一年愿景</div>

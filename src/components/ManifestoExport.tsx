@@ -9,18 +9,37 @@ interface FuturePreview {
   newIdentity: string | null
   loading: boolean
   error: string | null
+  enhancing?: boolean  // 新增：AI润色状态
+  oldPrompt?: string   // 新增：润色后的旧身份提示词
+  newPrompt?: string   // 新增：润色后的新身份提示词
+}
+
+// 调用 Netlify Function 润色提示词
+async function enhancePrompt(text: string, type: 'old' | 'new'): Promise<string> {
+  try {
+    const response = await fetch('/.netlify/functions/hunyuan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, type })
+    })
+    
+    const data = await response.json()
+    if (data.error) {
+      console.error('Enhancement API error:', data.error)
+      return text // 失败时用原文
+    }
+    return data.enhanced || text
+  } catch (error) {
+    console.error('Enhancement failed:', error)
+    return text
+  }
 }
 
 // 调用图片生成API
 async function generateImage(prompt: string): Promise<string | null> {
   try {
-    // 这里使用一个示例图片API
-    // 实际项目中可以替换为：OpenAI DALL-E, Midjourney API, Stable Diffusion 等
     const encodedPrompt = encodeURIComponent(prompt)
-    
-    // 使用 pollinations.ai - 一个免费的AI图片生成服务
     const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true`
-    
     return imageUrl
   } catch (err) {
     console.error('Image generation failed:', err)
@@ -35,6 +54,7 @@ function ManifestoContent() {
     oldIdentity: null,
     newIdentity: null,
     loading: false,
+    enhancing: false,
     error: null,
   })
 
@@ -51,21 +71,26 @@ function ManifestoContent() {
     pdf.save('我的身份宣言.pdf')
   }
 
-  // 生成五年后对比图
+  // 生成五年后对比图（带 AI 润色）
   const generateFuturePreview = async () => {
-    setPreview({ ...preview, loading: true, error: null })
+    setPreview({ ...preview, loading: true, enhancing: true, error: null })
 
     try {
-      const oldLabel = data.antiVision.oldIdentityLabel || 'a person stuck in stagnant life'
-      const newLabel = data.antiVision.newIdentityLabel || 'a successful confident person'
+      const oldLabel = data.antiVision.oldIdentityLabel || '一个困在旧身份中的人，每天重复着不喜欢的工作'
+      const newLabel = data.antiVision.newIdentityLabel || '一个成功蜕变的人，活出了自己想要的人生'
 
-      // 生成旧身份五年后的描述
-      const oldPrompt = `Cinematic photo, ${oldLabel}, 5 years in the future, sitting at desk looking at phone with regret, dimly lit room, grey tones, depressed atmosphere, photorealistic`
+      // 第一步：调用 AI 润色提示词
+      const [enhancedOld, enhancedNew] = await Promise.all([
+        enhancePrompt(oldLabel, 'old'),
+        enhancePrompt(newLabel, 'new')
+      ])
 
-      // 生成新身份五年后的描述
-      const newPrompt = `Cinematic photo, ${newLabel}, 5 years in the future, standing proudly in beautiful space, warm golden lighting, thriving atmosphere, photorealistic`
+      setPreview({ ...preview, enhancing: false, oldPrompt: enhancedOld, newPrompt: enhancedNew, loading: true })
 
-      // 并行生成两张图
+      // 第二步：用润色后的提示词生成图片
+      const oldPrompt = `Cinematic photo, ${enhancedOld}, 5 years in the future, sitting at desk looking at phone with regret, dimly lit room, grey tones, depressed atmosphere, photorealistic`
+      const newPrompt = `Cinematic photo, ${enhancedNew}, 5 years in the future, standing proudly in beautiful space, warm golden lighting, thriving atmosphere, photorealistic`
+
       const [oldImg, newImg] = await Promise.all([
         generateImage(oldPrompt),
         generateImage(newPrompt),
@@ -74,13 +99,17 @@ function ManifestoContent() {
       setPreview({
         oldIdentity: oldImg,
         newIdentity: newImg,
+        enhancing: false,
         loading: false,
         error: null,
+        oldPrompt: enhancedOld,
+        newPrompt: enhancedNew,
       })
     } catch (err) {
       setPreview({
         ...preview,
         loading: false,
+        enhancing: false,
         error: '图片生成失败，请重试',
       })
     }
@@ -103,7 +132,7 @@ function ManifestoContent() {
         <PartyPopper className="w-6 h-6 text-blue-400 scale-x-[-1]" />
       </div>
 
-      {/* 五年后对比预览 - 新增区域 */}
+      {/* 五年后对比预览 - AI 润色版 */}
       <div className="mb-10 p-6 rounded-3xl bg-gradient-to-br from-slate-900/80 to-slate-800/50 border border-slate-600/30">
         <div className="flex items-center justify-center gap-3 mb-6">
           <Sparkles className="w-5 h-5 text-amber-400" />
@@ -112,10 +141,33 @@ function ManifestoContent() {
         </div>
 
         <p className="text-center text-gray-400 text-sm mb-6">
-          基于你在前面步骤的思考，AI生成两条人生道路的五年后对比
+          AI 深度理解你的愿景，生成两条人生道路的五年后对比
         </p>
 
-        {preview.loading ? (
+        {/* 加载状态 */}
+        {preview.loading && preview.enhancing ? (
+          <div className="flex flex-col items-center justify-center py-12">
+            <div className="relative w-20 h-20 mb-6">
+              <div className="absolute inset-0 border-4 border-violet-500/20 rounded-full" />
+              <div className="absolute inset-0 border-4 border-transparent border-t-violet-500 rounded-full animate-spin" />
+              <div className="absolute inset-3 border-4 border-transparent border-t-blue-500 rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+              <div className="absolute inset-6 border-4 border-transparent border-t-amber-500 rounded-full animate-spin" style={{ animationDuration: '2s' }} />
+            </div>
+            <p className="text-gray-200 text-base font-medium mb-1">🤖 AI 正在深度理解你的愿景...</p>
+            <p className="text-gray-500 text-xs">将你的想法转化为精准的视觉描述</p>
+            
+            {/* 显示润色过程 */}
+            {preview.oldPrompt && (
+              <div className="mt-6 max-w-lg text-center">
+                <p className="text-gray-500 text-xs mb-2">AI 优化后的提示词：</p>
+                <div className="p-3 bg-slate-800/50 rounded-lg text-left">
+                  <p className="text-emerald-400 text-xs mb-1">🆕 新身份：</p>
+                  <p className="text-gray-300 text-xs italic">{preview.newPrompt}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : preview.loading ? (
           <div className="flex flex-col items-center justify-center py-12">
             <div className="relative w-16 h-16 mb-4">
               <div className="absolute inset-0 border-4 border-violet-500/20 rounded-full" />
@@ -217,7 +269,7 @@ function ManifestoContent() {
               <div className="absolute inset-0 rounded-full border-2 border-dashed border-violet-500/30 animate-pulse" />
             </div>
             <p className="text-gray-300 text-sm mb-2">还没有生成预览</p>
-            <p className="text-gray-500 text-xs mb-6">点击下方按钮，AI将基于你的选择生成对比图</p>
+            <p className="text-gray-500 text-xs mb-6">点击下方按钮，AI 将深度理解你的愿景并生成对比图</p>
             <button
               onClick={generateFuturePreview}
               disabled={!hasIdentityData}
